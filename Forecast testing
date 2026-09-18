@@ -1,0 +1,491 @@
+# ============================================================
+# GRADIO FORECAST EVALUATION WEB APP
+# ============================================================
+
+!pip -q install gradio
+
+import gradio as gr
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+import tempfile
+import os
+
+
+# ============================================================
+# FORECAST FUNCTION
+# ============================================================
+
+def create_forecast(df, start_index):
+
+    forecast = []
+
+    for i in range(start_index, start_index + 24):
+
+        previous_day_index = i - 24
+
+        predicted_price = df.loc[
+            previous_day_index,
+            "price_per_mwh"
+        ]
+
+        actual_price = df.loc[
+            i,
+            "price_per_mwh"
+        ]
+
+        forecast.append({
+            "ts": df.loc[i, "ts"],
+            "predicted_price": predicted_price,
+            "actual_price": actual_price
+        })
+
+    return pd.DataFrame(forecast)
+
+
+# ============================================================
+# MAIN EVALUATION
+# ============================================================
+
+def evaluate_forecast(file, days_to_plot=7):
+
+    if file is None:
+        return (
+            "Please upload market_prices.csv",
+            None,
+            None,
+            None,
+            None
+        )
+
+    try:
+
+        # ----------------------------------------------------
+        # LOAD CSV
+        # ----------------------------------------------------
+
+        df = pd.read_csv(file.name)
+
+        required_columns = [
+            "ts",
+            "price_per_mwh",
+            "load_mw",
+            "renewable_mw"
+        ]
+
+        missing_columns = [
+            col for col in required_columns
+            if col not in df.columns
+        ]
+
+        if missing_columns:
+            return (
+                f"ERROR: Missing columns: {missing_columns}",
+                None,
+                None,
+                None,
+                None
+            )
+
+        # ----------------------------------------------------
+        # PREPARE DATA
+        # ----------------------------------------------------
+
+        df["ts"] = pd.to_datetime(df["ts"])
+
+        df = (
+            df.sort_values("ts")
+              .reset_index(drop=True)
+        )
+
+        # ----------------------------------------------------
+        # DATA QUALITY
+        # ----------------------------------------------------
+
+        missing_values = int(df.isnull().sum().sum())
+
+        duplicate_timestamps = int(
+            df["ts"].duplicated().sum()
+        )
+
+        time_diff = df["ts"].diff().dropna()
+
+        hourly = (
+            time_diff == pd.Timedelta(hours=1)
+        ).all()
+
+        # ----------------------------------------------------
+        # FORECAST
+        # ----------------------------------------------------
+
+        all_forecasts = []
+
+        for start_index in range(
+            24,
+            len(df) - 23,
+            24
+        ):
+
+            daily_forecast = create_forecast(
+                df,
+                start_index
+            )
+
+            all_forecasts.append(
+                daily_forecast
+            )
+
+        if len(all_forecasts) == 0:
+            return (
+                "ERROR: Dataset is too small for forecasting.",
+                None,
+                None,
+                None,
+                None
+            )
+
+        results = pd.concat(
+            all_forecasts,
+            ignore_index=True
+        )
+
+        # ----------------------------------------------------
+        # ERRORS
+        # ----------------------------------------------------
+
+        results["error"] = (
+            results["actual_price"]
+            - results["predicted_price"]
+        )
+
+        results["absolute_error"] = (
+            results["error"].abs()
+        )
+
+        mae = mean_absolute_error(
+            results["actual_price"],
+            results["predicted_price"]
+        )
+
+        rmse = np.sqrt(
+            mean_squared_error(
+                results["actual_price"],
+                results["predicted_price"]
+            )
+        )
+
+        # ----------------------------------------------------
+        # NEGATIVE PRICES
+        # ----------------------------------------------------
+
+        negative_prices = results[
+            results["actual_price"] < 0
+        ]
+
+        if len(negative_prices) > 0:
+
+            negative_mae = mean_absolute_error(
+                negative_prices["actual_price"],
+                negative_prices["predicted_price"]
+            )
+
+        else:
+            negative_mae = None
+
+        # ----------------------------------------------------
+        # PRICE SPIKES
+        # ----------------------------------------------------
+
+        spike_threshold = df[
+            "price_per_mwh"
+        ].quantile(0.90)
+
+        spikes = results[
+            results["actual_price"]
+            >= spike_threshold
+        ]
+
+        if len(spikes) > 0:
+
+            spike_mae = mean_absolute_error(
+                spikes["actual_price"],
+                spikes["predicted_price"]
+            )
+
+        else:
+            spike_mae = None
+
+        # ----------------------------------------------------
+        # BIAS
+        # ----------------------------------------------------
+
+        mean_error = results["error"].mean()
+
+        if mean_error > 0:
+
+            bias = "Under-predicts prices on average"
+
+        elif mean_error < 0:
+
+            bias = "Over-predicts prices on average"
+
+        else:
+
+            bias = "No average bias"
+
+        # ----------------------------------------------------
+        # WORST ERRORS
+        # ----------------------------------------------------
+
+        worst = (
+            results
+            .sort_values(
+                "absolute_error",
+                ascending=False
+            )
+            .head(10)
+        )
+
+        worst_display = worst[
+            [
+                "ts",
+                "predicted_price",
+                "actual_price",
+                "error",
+                "absolute_error"
+            ]
+        ].copy()
+
+        # ----------------------------------------------------
+        # PLOT
+        # ----------------------------------------------------
+
+        plot_rows = min(
+            len(results),
+            int(days_to_plot) * 24
+        )
+
+        plot_data = results.head(plot_rows)
+
+        fig, ax = plt.subplots(
+            figsize=(14, 5)
+        )
+
+        ax.plot(
+            plot_data["ts"],
+            plot_data["actual_price"],
+            label="Actual Price"
+        )
+
+        ax.plot(
+            plot_data["ts"],
+            plot_data["predicted_price"],
+            label="Predicted Price"
+        )
+
+        ax.set_xlabel("Time")
+        ax.set_ylabel("Price (€/MWh)")
+        ax.set_title(
+            "Actual vs Predicted Electricity Price"
+        )
+
+        ax.legend()
+        ax.tick_params(axis="x", rotation=45)
+
+        fig.tight_layout()
+
+        # ----------------------------------------------------
+        # SAVE RESULTS
+        # ----------------------------------------------------
+
+        output_file = tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".csv"
+        ).name
+
+        results.to_csv(
+            output_file,
+            index=False
+        )
+
+        # ----------------------------------------------------
+        # SUMMARY
+        # ----------------------------------------------------
+
+        summary = f"""
+# Forecast Evaluation Report
+
+## Dataset
+
+**Rows:** {len(df):,}
+
+**Date range:** {df["ts"].min()} → {df["ts"].max()}
+
+**Forecast days tested:** {len(all_forecasts):,}
+
+**Forecast hours tested:** {len(results):,}
+
+---
+
+## Data Quality
+
+| Test | Result |
+|---|---|
+| Missing values | {"PASS" if missing_values == 0 else "FAIL"} |
+| Duplicate timestamps | {"PASS" if duplicate_timestamps == 0 else "FAIL"} |
+| Hourly timestamps | {"PASS" if hourly else "FAIL"} |
+
+---
+
+## Forecast Accuracy
+
+**MAE:** {mae:.4f} €/MWh
+
+**RMSE:** {rmse:.4f} €/MWh
+
+**Mean error:** {mean_error:.4f} €/MWh
+
+**Bias:** {bias}
+
+---
+
+## Special Cases
+
+**Negative-price hours:** {len(negative_prices):,}
+
+**Negative-price MAE:** {
+    f"{negative_mae:.4f} €/MWh"
+    if negative_mae is not None
+    else "N/A"
+}
+
+**Price-spike threshold:** {spike_threshold:.2f} €/MWh
+
+**Price-spike hours:** {len(spikes):,}
+
+**Price-spike MAE:** {
+    f"{spike_mae:.4f} €/MWh"
+    if spike_mae is not None
+    else "N/A"
+}
+"""
+
+        return (
+            summary,
+            worst_display,
+            fig,
+            output_file,
+            results.head(24)
+        )
+
+    except Exception as e:
+
+        return (
+            f"ERROR: {str(e)}",
+            None,
+            None,
+            None,
+            None
+        )
+
+
+# ============================================================
+# GRADIO UI
+# ============================================================
+
+with gr.Blocks(
+    title="Battery Forecast Evaluator"
+) as app:
+
+    gr.Markdown(
+        """
+        # 🔋 Battery Price Forecast Evaluator
+
+        Upload the **market_prices.csv** dataset to evaluate
+        the 24-hour lag electricity-price forecasting model.
+
+        **Prediction rule:**
+
+        `Predicted price(t) = Actual price(t - 24 hours)`
+        """
+    )
+
+    with gr.Row():
+
+        file_input = gr.File(
+            label="Upload market_prices.csv",
+            file_types=[".csv"],
+            type="filepath"
+        )
+
+        days_input = gr.Number(
+            value=7,
+            label="Days to show in graph",
+            minimum=1,
+            maximum=30,
+            precision=0
+        )
+
+    run_button = gr.Button(
+        "🚀 Run Forecast Evaluation",
+        variant="primary"
+    )
+
+    report = gr.Markdown(
+        label="Evaluation Report"
+    )
+
+    gr.Markdown(
+        "### Top 10 Worst Forecast Errors"
+    )
+
+    worst_table = gr.Dataframe(
+        label="Worst Errors",
+        interactive=False
+    )
+
+    gr.Markdown(
+        "### Actual vs Predicted"
+    )
+
+    plot = gr.Plot(
+        label="Forecast Plot"
+    )
+
+    gr.Markdown(
+        "### First 24-Hour Forecast"
+    )
+
+    first_day = gr.Dataframe(
+        label="First 24 Hours",
+        interactive=False
+    )
+
+    download_file = gr.File(
+        label="Download Complete Forecast Results"
+    )
+
+    run_button.click(
+        fn=evaluate_forecast,
+        inputs=[
+            file_input,
+            days_input
+        ],
+        outputs=[
+            report,
+            worst_table,
+            plot,
+            download_file,
+            first_day
+        ]
+    )
+
+
+# ============================================================
+# LAUNCH
+# ============================================================
+
+app.launch(
+    share=True
+)
