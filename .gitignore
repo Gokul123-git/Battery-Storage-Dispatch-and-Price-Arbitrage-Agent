@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.env
+models/*.joblib
+logs/*.sqlite
+logs/*.log
+.pytest_cache/
+.streamlit/

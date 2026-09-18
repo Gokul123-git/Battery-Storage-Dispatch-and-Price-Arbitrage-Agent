@@ -1,0 +1,15 @@
+# GridFlex AI - CPU only, Python 3.10+
+pandas>=2.0
+numpy>=1.24
+pyarrow>=12.0
+scikit-learn>=1.3
+lightgbm>=4.0          # optional: sklearn HistGradientBoosting is the fallback
+pulp>=2.7              # LP solver (bundled CBC)
+streamlit>=1.30
+plotly>=5.18
+langgraph>=0.1         # scenario agent (sequential fallback if missing)
+duckdb>=0.10           # analytics over the SQLite run logs
+joblib>=1.3
+python-dotenv>=1.0
+anthropic>=0.30        # optional: LLM rewrite of the operator note
+pytest>=7.4
