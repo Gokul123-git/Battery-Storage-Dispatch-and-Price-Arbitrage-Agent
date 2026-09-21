@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import warnings
 
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -187,70 +186,40 @@ st.dataframe(tbl.style.format({
 # ========================= ECONOMICS / BENCHMARK ===========================
 st.subheader("Closed-loop economics")
 if bt:
-    e = st.columns(6)
+    e = st.columns(4)
     kpi(e[0], "Net profit", f"{bt['net_profit']:,.0f}",
         f"{bt['steps']}h closed loop ending {bt['end']}")
     kpi(e[1], "Discharge revenue", f"{bt['revenue']:,.0f}")
     kpi(e[2], "Charging cost", f"{bt['charging_cost']:,.0f}")
     kpi(e[3], "Degradation cost", f"{bt['degradation_cost']:,.0f}")
-    kpi(e[4], "Throughput", f"{bt['throughput_mwh']:,.0f} MWh")
-    kpi(e[5], "Equivalent cycles", f"{bt['equivalent_cycles']:.2f}")
 
-    b = st.columns(6)
-    kpi(b[0], "Closed-loop profit", f"{bench.get('closed_loop_profit', float('nan')):,.0f}")
-    kpi(b[1], "Open-loop profit", f"{bench.get('open_loop_profit', float('nan')):,.0f}",
-        "Plan once per horizon, never re-forecast")
-    kpi(b[2], "Perfect foresight", f"{bench.get('perfect_foresight_profit', float('nan')):,.0f}",
+    b = st.columns(3)
+    kpi(b[0], "Perfect foresight", f"{bench.get('perfect_foresight_profit', float('nan')):,.0f}",
         "Benchmark only: knows the actual future prices")
-    kpi(b[3], "Regret", f"{bench.get('regret', float('nan')):,.0f}")
-    kpi(b[4], "Regret %", f"{bench.get('regret_pct', float('nan')):.1f}%")
-    kpi(b[5], "Value of feedback", f"{bench.get('closed_vs_open', float('nan')):,.0f}",
+    kpi(b[1], "Regret %", f"{bench.get('regret_pct', float('nan')):.1f}%",
+        "How far below perfect foresight we land")
+    kpi(b[2], "Value of feedback", f"{bench.get('closed_vs_open', float('nan')):,.0f}",
         "Closed-loop minus open-loop profit")
 
-    a = st.columns(6)
-    kpi(a[0], "CHARGE / DISCHARGE / WAIT",
-        f"{bt['charge_events']} / {bt['discharge_events']} / {bt['wait_events']}")
-    kpi(a[1], "Forecast MAE", f"{bt['forecast_mae']:,.2f}")
-    kpi(a[2], "Forecast RMSE", f"{bt['forecast_rmse']:,.2f}")
-    kpi(a[3], "Dispatch-weighted MAE", f"{bt['dispatch_weighted_mae']:,.2f}",
-        "Error in the hours where we actually traded -- the error that costs money")
-    kpi(a[4], "Avg LP solve", f"{bt['avg_solve_seconds'] * 1000:,.0f} ms",
-        f"{r['solver']['n_vars']} vars / {r['solver']['n_constraints']} constraints, "
-        f"max {bt['max_solve_seconds'] * 1000:,.0f} ms")
-    kpi(a[5], "Backtest runtime", f"{bt['runtime_seconds']:,.1f} s",
-        f"{bt['solver_calls']} solver calls, {bt['reserve_violations']} reserve breaches")
-
-    g1, g2 = st.columns([3, 2])
-    with g1:
-        log = r["backtest_log"]
-        fig3 = make_subplots(specs=[[{"secondary_y": True}]])
-        fig3.add_trace(go.Scatter(x=log["ts"], y=log["price"], name="Actual price",
-                                  line=dict(color="#34495e", width=1.4)))
-        fig3.add_trace(go.Scatter(x=log["ts"], y=log["forecast"], name="Forecast (t+1)",
-                                  line=dict(color="#2e86de", width=1.2, dash="dot")))
-        fig3.add_trace(go.Bar(x=log["ts"], y=log["charge_mw"], name="Charge",
-                              marker_color=ACCENT["CHARGE"], opacity=0.55),
-                       secondary_y=True)
-        fig3.add_trace(go.Bar(x=log["ts"], y=-log["discharge_mw"], name="Discharge",
-                              marker_color=ACCENT["DISCHARGE"], opacity=0.55),
-                       secondary_y=True)
-        fig3.update_layout(height=320, barmode="relative",
-                           title="Closed-loop execution (realised prices)",
-                           margin=dict(l=10, r=10, t=40, b=10),
-                           legend=dict(orientation="h", y=1.12))
-        fig3.update_yaxes(title_text="Price /MWh", secondary_y=False)
-        fig3.update_yaxes(title_text="MW", secondary_y=True)
-        st.plotly_chart(fig3, width='stretch')
-    with g2:
-        ei = r.get("error_impact")
-        if isinstance(ei, pd.DataFrame) and not ei.empty:
-            st.markdown("**Where forecast error cost money**")
-            st.dataframe(ei.style.format({
-                "mean_abs_error": "{:,.1f}", "traded_mwh": "{:,.0f}",
-                "profit": "{:,.0f}", "profit_per_mwh": "{:,.2f}"}),
-                width='stretch', height=250)
-            st.caption("Hours bucketed by absolute forecast error. Error is only "
-                       "expensive where the battery actually traded.")
+    log = r["backtest_log"]
+    fig3 = make_subplots(specs=[[{"secondary_y": True}]])
+    fig3.add_trace(go.Scatter(x=log["ts"], y=log["price"], name="Actual price",
+                              line=dict(color="#34495e", width=1.4)))
+    fig3.add_trace(go.Scatter(x=log["ts"], y=log["forecast"], name="Forecast (t+1)",
+                              line=dict(color="#2e86de", width=1.2, dash="dot")))
+    fig3.add_trace(go.Bar(x=log["ts"], y=log["charge_mw"], name="Charge",
+                          marker_color=ACCENT["CHARGE"], opacity=0.55),
+                   secondary_y=True)
+    fig3.add_trace(go.Bar(x=log["ts"], y=-log["discharge_mw"], name="Discharge",
+                          marker_color=ACCENT["DISCHARGE"], opacity=0.55),
+                   secondary_y=True)
+    fig3.update_layout(height=320, barmode="relative",
+                       title="Closed-loop execution (realised prices)",
+                       margin=dict(l=10, r=10, t=40, b=10),
+                       legend=dict(orientation="h", y=1.12))
+    fig3.update_yaxes(title_text="Price /MWh", secondary_y=False)
+    fig3.update_yaxes(title_text="MW", secondary_y=True)
+    st.plotly_chart(fig3, width='stretch')
 else:
     st.info("Backtest window set to 0 - showing the forward plan only.")
 
